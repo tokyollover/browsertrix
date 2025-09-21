@@ -18,6 +18,7 @@ admin_node_pool:
   count: 1
 
 db_name: "{{ project_name }}"
+db_version: "7"
 k8s_name: "{{ project_name }}"
 
 bucket_name: "{{ project_name }}"
@@ -27,6 +28,24 @@ registry_name: "{{ project_name }}"
 
 domain: "browsertrix.cloud"
 subdomain: "{{ project_name }}"
+
+# DNS provider selection: "digitalocean" or "cloudflare"
+dns_provider: "digitalocean"
+
+# If using Cloudflare, set your base domain and subdomain here
+# Example to use mirrors.winnersboss.com managed by Cloudflare:
+# domain: "winnersboss.com"
+# subdomain: "mirrors"
+
+# Cloudflare settings (used when dns_provider == "cloudflare")
+# Provide credentials via environment variables for security:
+#   CF_API_EMAIL   - your Cloudflare account e-mail
+#   CF_API_KEY     - your Cloudflare Global API Key
+# Optionally set CF_ZONE_ID to skip zone lookup
+cloudflare:
+  email: "{{ lookup('env', 'CF_API_EMAIL') | default('', true) }}"
+  api_key: "{{ lookup('env', 'CF_API_KEY') | default('', true) }}"
+  zone_id: "{{ lookup('env', 'CF_ZONE_ID') | default('', true) }}"
 
 
 configure_kubectl: false

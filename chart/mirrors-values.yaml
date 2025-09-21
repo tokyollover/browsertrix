@@ -1,0 +1,58 @@
+# Resources / Node Types
+main_node_type: main
+
+crawler_node_type: crawling
+redis_node_type: crawling
+
+crawler_pull_policy: "Always"
+
+crawler_browser_instances: 4
+
+crawler_storage: "220Gi"
+
+# Registry
+
+# DB
+mongo_local: true
+
+
+# Storage
+minio_local: true
+
+
+
+# Domain
+ingress:
+  host: mirrors.winnersboss.com
+  cert_email: admin@winnersboss.com
+  tls: true
+
+
+# Signing
+signer:
+  enabled: true
+  host: signing.mirrors.winnersboss.com
+  cert_email: admin@winnersboss.com
+  image_pull_policy: "IfNotPresent"
+  auth_token: 11f15260-1258-59e8-8016-e2144d942eac
+
+
+# User Auth
+superuser:
+  email: admin@winnersboss.com
+  password: CHANGE_ME_STRONG
+
+registration_enabled: "0"
+
+default_org: "mirrors"
+
+
+# Admin Send Email Options
+email:
+  smtp_port: 587
+  smtp_host: 
+  sender_email: no-reply@winnersboss.com
+  password: 
+  reply_to_email: support@winnersboss.com
+
+# Admin Addons

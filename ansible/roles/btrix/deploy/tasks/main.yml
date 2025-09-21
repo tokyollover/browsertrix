@@ -4,5 +4,5 @@
   register: helm_result
   changed_when: helm_result.rc == 0
   environment:
-    KUBECONFIG: "/home/{{ ansible_user }}/.kube/config"
+    KUBECONFIG: "{{ (ansible_env.HOME if ansible_env is defined else lookup('env','HOME')) + '/.kube/config' }}"
   tags: helm_upgrade

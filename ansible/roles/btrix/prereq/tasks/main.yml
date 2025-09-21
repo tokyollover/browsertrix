@@ -14,13 +14,19 @@
     chmod +700 get_helm.sh
     ./get_helm.sh
   when: helm_result.rc != 0
+  become: true
 
 - name: Install kubectl
   ansible.builtin.shell: |
     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
     install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+  become: true
 
-- name: Install jq
+- name: Install system packages (jq, boto3/botocore)
   ansible.builtin.package:
-    name: jq
+    name:
+      - jq
+      - python3-boto3
+      - python3-botocore
     state: present
+  become: true

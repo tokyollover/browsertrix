@@ -1,0 +1,34 @@
+---
+# Example vars file to deploy Browsertrix to mirrors.winnersboss.com using Cloudflare DNS
+
+project_name: "mirrors"
+
+domain: "winnersboss.com"
+subdomain: "mirrors"
+
+dns_provider: "cloudflare"
+
+# Admin / certs
+superuser_email: "admin@winnersboss.com"
+superuser_password: "CHANGE_ME_STRONG"
+cert_email: "admin@winnersboss.com"
+
+# Optional: enable public registration (0/1)
+registration_enabled: false
+
+# Optional: configure SMTP for emails (password via env recommended)
+smtp_host: ""
+smtp_port: "587"
+sender_email: "no-reply@winnersboss.com"
+reply_to_email: "support@winnersboss.com"
+sender_password: ""
+
+# Optional: signing subdomain
+enable_signing: true
+signing_host: "signing"
+
+# Use in-cluster MongoDB instead of DO managed
+mongo_local: true
+
+# Use local MinIO storage instead of DO Spaces
+minio_local: true

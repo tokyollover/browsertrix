@@ -19,20 +19,24 @@ crawler_image: "{{ registry_endpoint }}/webrecorder/browsertrix-crawler:{{ image
 {% endif %}
 
 # DB
-mongo_local: false
+mongo_local: {{ 'true' if mongo_local | default(false) else 'false' }}
 
+{% if not mongo_local | default(false) %}
 mongo_auth:
   db_url: "{{ db_url }}"
+{% endif %}
 
 # Storage
-minio_local: false
+minio_local: {{ 'true' if minio_local | default(false) else 'false' }}
 
+{% if not minio_local | default(false) %}
 storages:
   - name: "default"
     access_key: "{{ lookup('env', 'DO_AWS_ACCESS_KEY')}}"
     secret_key: "{{ lookup('env', 'DO_AWS_SECRET_KEY')}}"
 
     endpoint_url: "{{ bucket_endpoint_url }}"
+{% endif %}
 
 
 # Domain

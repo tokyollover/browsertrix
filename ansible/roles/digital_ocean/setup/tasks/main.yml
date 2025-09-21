@@ -1,12 +1,29 @@
 ---
 # Prereq
 # ===========================================
-# - name: d_ocean | init | install doctl
-#   ansible.builtin.package:
-#     name: "{{ item }}"
-#     state: present
-#   loop:
-#     - doctl
+- name: d_ocean | init | check doctl
+  ansible.builtin.command: doctl version
+  register: doctl_version
+  changed_when: false
+  failed_when: false
+
+- name: d_ocean | init | install doctl from bundled tarball if missing
+  become: true
+  args:
+    chdir: "{{ playbook_dir | default('.') }}"
+    executable: /bin/bash
+  ansible.builtin.shell: |
+    set -euo pipefail
+    tar -xzf ../doctl-1.105.0-linux-amd64.tar.gz -C /usr/local/bin
+    chmod +x /usr/local/bin/doctl
+  when: doctl_version.rc != 0
+
+- name: d_ocean | init | authenticate doctl using env token
+  ansible.builtin.shell: doctl auth init -t "${DO_API_TOKEN}"
+  environment:
+    DO_API_TOKEN: "{{ lookup('env', 'DO_API_TOKEN') }}"
+  changed_when: false
+  when: (lookup('env', 'DO_API_TOKEN') | default('') | length) > 0
 
 - name: d_ocean | init | set full domain
   ansible.builtin.set_fact:
@@ -19,43 +36,55 @@
   changed_when: false
   failed_when: false
   register: db_check
+  when: not (mongo_local | default(false))
 
 - name: d_ocean | db | create mongodb database
-  ansible.builtin.command: doctl databases create {{ db_name }} --region {{ droplet_region }} --engine mongodb --version 6 --output json
+  ansible.builtin.command: doctl databases create {{ db_name }} --region {{ droplet_region }} --engine mongodb --version {{ db_version | default('7') }} --output json
   async: 1800
   poll: 60
   register: db_create
-  when: "db_check.stdout | from_json | json_query(name_query) | length < 1"
+  when: not (mongo_local | default(false)) and (db_check.stdout is defined) and (db_check.stdout | from_json | json_query(name_query) | length < 1)
   changed_when: true
   vars:
     name_query: '[?name==`{{ db_name }}`]'
 
 - name: d_ocean | db | set db id
   ansible.builtin.set_fact:
-    db_uuid: "{{ db_create.stdout if db_create.changed else db_check.stdout | from_json | json_query(name_query) | json_query('[0].id') }}"
+    db_uuid: "{{ (db_create.stdout | from_json | json_query('[0].id')) if db_create.changed else (db_check.stdout | from_json | json_query(name_query) | json_query('[0].id')) }}"
   vars:
     name_query: '[?name==`{{ db_name }}`]'
+  when: not (mongo_local | default(false))
 
-- name: d_ocean | db | reset db user password
+- name: d_ocean | db | wait for db to be online
+  ansible.builtin.command: doctl databases get {{ db_uuid }} -o json
+  register: db_status
+  changed_when: false
+  retries: 120
+  delay: 10
+  until: (db_status.stdout | from_json | json_query('[0].status')) == 'online'
+  when: not (mongo_local | default(false))
+
+- name: d_ocean | db | reset db user password (ensure password known)
   ansible.builtin.command: doctl databases user reset {{ db_uuid }} doadmin -o json
   register: db_user
-  when: not db_create.changed
   changed_when: true
+  when: not (mongo_local | default(false))
 
-- name: d_ocean | db | set db config
+- name: d_ocean | db | set db config (uuid)
   ansible.builtin.set_fact:
-    db_uuid: "{{ db_create.stdout if db_create.changed else db_check.stdout | from_json | json_query(name_query) | json_query('[0].id') }}"
+    db_uuid: "{{ (db_create.stdout | from_json | json_query('[0].id')) if db_create.changed else (db_check.stdout | from_json | json_query(name_query) | json_query('[0].id')) }}"
   vars:
     name_query: '[?name==`{{ db_name }}`]'
+  when: not (mongo_local | default(false))
 
-- name: d_ocean | db | set db config
+- name: d_ocean | db | set db config (url)
   ansible.builtin.set_fact:
-    db_url: "{{ db_check.stdout | from_json | json_query(name_query) | json_query('[0].private_connection.uri') | replace(old, new) }}"
-  when: not db_create.changed
+    db_url: "{{ ((db_create.stdout | from_json | json_query('[0].private_connection.uri')) if db_create.changed else (db_check.stdout | from_json | json_query(name_query) | json_query('[0].private_connection.uri'))) | replace(old, new) }}"
   vars:
     name_query: '[?name==`{{ db_name }}`]'
     old: ":@"
     new: ":{{ db_user.stdout | from_json | json_query('[0].password') }}@"
+  when: not (mongo_local | default(false))
 
 # Storage (Space)
 # ===========================================
@@ -69,11 +98,13 @@
     region: "{{ droplet_region }}"
   register: db_space_result
   ignore_errors: true
+  when: not (minio_local | default(false))
 
 - name: d_ocean | space | set endpoint urls
   ansible.builtin.set_fact:
     endpoint_url: "{{ db_space_result.data.space.endpoint_url }}/"
     bucket_endpoint_url: "{{ db_space_result.data.space.endpoint_url }}/{{ db_space_result.data.space.name }}/{{ bucket_path }}/"
+  when: not (minio_local | default(false)) and (db_space_result is defined) and (db_space_result.data is defined)
 
 - name: d_ocean | space | set bucket cors
   community.aws.aws_s3_cors:
@@ -95,6 +126,7 @@
           - Content-Range
           - Content-Encoding
           - Content-Length
+  when: not (minio_local | default(false))
 
 # K8S
 # ===========================================
@@ -178,10 +210,11 @@
   ansible.builtin.command: doctl db firewalls list {{ db_uuid }} -o json
   register: db_firewalls
   changed_when: true
+  when: not (mongo_local | default(false))
 
 - name: d_ocean | db | configure firewall for mongoDB
   ansible.builtin.command: doctl db firewalls append {{ db_uuid }} --rule k8s:{{ my_cluster.data.id }}
-  when: "db_firewalls.stdout == []"
+  when: not (mongo_local | default(false)) and (db_firewalls is defined) and (db_firewalls.stdout == [])
   changed_when: true # if it runs, it's changed
 
 # DNS
@@ -202,8 +235,35 @@
   ansible.builtin.command: >-
       doctl compute domain records create --record-type A --record-name "{{ subdomain if subdomain else '@' }}" --record-data "{{ lb_ip }}" "{{ domain }}"
 
+  when: dns_provider | default('digitalocean') == 'digitalocean'
   changed_when: dns_result.rc == 0
   register: dns_result
+
+- name: d_ocean | dns | ensure Cloudflare A record exists for main domain
+  ansible.builtin.shell: |
+    set -euo pipefail
+    CF_API="https://api.cloudflare.com/client/v4"
+    AUTH=(-H "X-Auth-Email: {{ cloudflare.email }}" -H "X-Auth-Key: {{ cloudflare.api_key }}" -H "Content-Type: application/json")
+    ZONE_ID="{{ cloudflare.zone_id }}"
+    if [ -z "$ZONE_ID" ]; then
+      ZONE_ID=$(curl -fsSL "${CF_API}/zones?name={{ domain }}" "${AUTH[@]}" | jq -r '.result[0].id')
+    fi
+    NAME="{{ subdomain + '.' + domain if subdomain else domain }}"
+    REC_ID=$(curl -fsSL "${CF_API}/zones/${ZONE_ID}/dns_records?type=A&name=${NAME}" "${AUTH[@]}" | jq -r '.result[0].id // empty')
+    if [ -z "$REC_ID" ]; then
+      curl -fsSL -X POST "${CF_API}/zones/${ZONE_ID}/dns_records" "${AUTH[@]}" \
+        --data '{"type":"A","name":"'"${NAME}"'","content":"'"{{ lb_ip }}"'","ttl":120,"proxied":false}' > /dev/null
+    else
+      curl -fsSL -X PUT "${CF_API}/zones/${ZONE_ID}/dns_records/${REC_ID}" "${AUTH[@]}" \
+        --data '{"type":"A","name":"'"${NAME}"'","content":"'"{{ lb_ip }}"'","ttl":120,"proxied":false}' > /dev/null
+    fi
+  environment:
+     CF_API_EMAIL: "{{ cloudflare.email }}"
+     CF_API_KEY: "{{ cloudflare.api_key }}"
+  args:
+    executable: /bin/bash
+  when: dns_provider | default('digitalocean') == 'cloudflare'
+  changed_when: true
 
 
 # Signing + DNS
@@ -221,16 +281,43 @@
   ansible.builtin.command: doctl compute domain records ls {{ domain }} -o json
   register: check_domain
   changed_when: true
+  when: dns_provider | default('digitalocean') == 'digitalocean'
 
 - name: d_ocean | signing | register the dns for signing subdomain
   ansible.builtin.command: >-
       doctl compute domain records create --record-type A --record-name "{{ signing_subdomain }}" --record-data "{{ lb_ip }}" "{{ domain }}"
 
   register: signing_dns_result
-  when: "check_domain.stdout | from_json | json_query(name_query) | length < 1"
+  when: dns_provider | default('digitalocean') == 'digitalocean' and (check_domain.stdout | from_json | json_query(name_query) | length < 1)
   changed_when: true # if it ran, it changed
   vars:
     name_query: '[?name==`{{ signing_subdomain }}`]'
+
+- name: d_ocean | signing | ensure Cloudflare A record exists for signing subdomain
+  ansible.builtin.shell: |
+    set -euo pipefail
+    CF_API="https://api.cloudflare.com/client/v4"
+    AUTH=(-H "X-Auth-Email: {{ cloudflare.email }}" -H "X-Auth-Key: {{ cloudflare.api_key }}" -H "Content-Type: application/json")
+    ZONE_ID="{{ cloudflare.zone_id }}"
+    if [ -z "$ZONE_ID" ]; then
+      ZONE_ID=$(curl -fsSL "${CF_API}/zones?name={{ domain }}" "${AUTH[@]}" | jq -r '.result[0].id')
+    fi
+    NAME="{{ signing_subdomain }}.{{ domain }}"
+    REC_ID=$(curl -fsSL "${CF_API}/zones/${ZONE_ID}/dns_records?type=A&name=${NAME}" "${AUTH[@]}" | jq -r '.result[0].id // empty')
+    if [ -z "$REC_ID" ]; then
+      curl -fsSL -X POST "${CF_API}/zones/${ZONE_ID}/dns_records" "${AUTH[@]}" \
+        --data '{"type":"A","name":"'"${NAME}"'","content":"'"{{ lb_ip }}"'","ttl":120,"proxied":false}' > /dev/null
+    else
+      curl -fsSL -X PUT "${CF_API}/zones/${ZONE_ID}/dns_records/${REC_ID}" "${AUTH[@]}" \
+        --data '{"type":"A","name":"'"${NAME}"'","content":"'"{{ lb_ip }}"'","ttl":120,"proxied":false}' > /dev/null
+    fi
+  environment:
+    CF_API_EMAIL: "{{ cloudflare.email }}"
+    CF_API_KEY: "{{ cloudflare.api_key }}"
+  args:
+    executable: /bin/bash
+  when: enable_signing and (dns_provider | default('digitalocean') == 'cloudflare')
+  changed_when: true
 
 # Registry
 # ===========================================
